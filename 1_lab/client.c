@@ -1,11 +1,3 @@
-/*
- * Chat klientas
- *
- * Dvi gijos:
- *   - skaitymo gija: server -> stdout
- *   - pagrindine gija: stdin -> server
- */
-
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>

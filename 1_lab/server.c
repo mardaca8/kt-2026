@@ -1,7 +1,3 @@
-/*
- * Chat serveris su kambariais ir failu pagrindo persistencija
- */
-
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -34,12 +30,12 @@
 
 typedef struct {
     char name[ROOM_NAME_LEN];
-    int  members[MAX_PER_ROOM];
+    int  members[MAX_PER_ROOM]; // array of client fds
     int  nmembers;
 } Room;
 
 typedef struct {
-    int  fd;
+    int  fd; // client socket fd
     int  active;
     int  has_nick;
     char nick[NICK_LEN];
@@ -53,7 +49,7 @@ static Client  clients[MAX_CLIENTS];
 static pthread_mutex_t state_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t io_mu    = PTHREAD_MUTEX_INITIALIZER;
 
-/* ---------- utils ---------- */
+// utility functions
 
 static void send_line(int fd, const char *s) {
     size_t n = strlen(s);
@@ -107,7 +103,7 @@ static int nick_taken_locked(const char *nick) {
     return 0;
 }
 
-/* caller holds state_mu */
+// state manipulation functions (caller must hold state_mu)
 static void room_remove_member_locked(int room_idx, int fd) {
     if (room_idx < 0) return;
     Room *r = &rooms[room_idx];
@@ -119,7 +115,7 @@ static void room_remove_member_locked(int room_idx, int fd) {
     }
 }
 
-/* caller holds state_mu */
+// caller must hold state_mu
 static void broadcast_room_locked(int room_idx, int except_fd, const char *line) {
     if (room_idx < 0) return;
     Room *r = &rooms[room_idx];
@@ -129,8 +125,7 @@ static void broadcast_room_locked(int room_idx, int except_fd, const char *line)
     }
 }
 
-/* ---------- persistence ---------- */
-
+// initialization and persistence
 static void ensure_dirs(void) {
     mkdir(DATA_DIR, 0755);
     mkdir(MSG_DIR, 0755);
@@ -210,8 +205,7 @@ static void send_history(int fd, const char *room) {
     for (int i = 0; i < HISTORY_TAIL; i++) free(lines[i]);
 }
 
-/* ---------- command handlers ---------- */
-
+// command handlers
 static void cmd_nick(int ci, char *arg) {
     int fd = clients[ci].fd;
     if (!arg || !*arg) { send_line(fd, "ERR usage: /nick <name>"); return; }
@@ -398,8 +392,7 @@ static void handle_message(int ci, const char *text) {
     persist_message(room_name, nick_copy, text);
 }
 
-/* ---------- per-client thread ---------- */
-
+// client thread
 static void process_line(int ci, char *line) {
     rstrip(line);
     if (!*line) return;
@@ -493,8 +486,7 @@ static void *client_thread(void *arg) {
     return NULL;
 }
 
-/* ---------- main ---------- */
-
+// main server loop
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         printf("USAGE: %s <port>\n", argv[0]);
