@@ -12,9 +12,10 @@
 
 #define BUFFLEN 1024
 
-static int g_socket = -1;
-static volatile int g_done = 0;
+static int g_socket = -1; // global socket fd for main thread and reader thread
+static volatile int g_done = 0; // flag to indicate when to stop main thread (e.g. on disconnect or /quit)
 
+// reader thread: receives messages from server and prints to stdout
 static void *reader_thread(void *arg) {
     (void)arg;
     char buf[BUFFLEN + 1];
@@ -39,7 +40,7 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
     unsigned int port = atoi(argv[2]);
-    if (port < 1 || port > 65535) {
+    if (port < 1 || port > 10000) {
         printf("ERROR #1: invalid port specified.\n");
         exit(1);
     }
@@ -52,6 +53,7 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
+    // connect to server
     struct sockaddr_in servaddr;
     memset(&servaddr, 0, sizeof(servaddr));
     servaddr.sin_family = AF_INET;
@@ -66,6 +68,7 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
+    // start reader thread
     pthread_t tid;
     if (pthread_create(&tid, NULL, reader_thread, NULL) != 0) {
         fprintf(stderr, "ERROR #5: pthread_create failed.\n");
@@ -73,6 +76,7 @@ int main(int argc, char *argv[]) {
     }
     pthread_detach(tid);
 
+    // main loop: read lines from stdin and send to server
     char line[BUFFLEN];
     while (!g_done && fgets(line, sizeof(line), stdin)) {
         size_t n = strlen(line);

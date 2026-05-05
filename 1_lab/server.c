@@ -57,6 +57,7 @@ static void send_line(int fd, const char *s) {
     send(fd, "\n", 1, MSG_NOSIGNAL);
 }
 
+// sends a formatted line 
 static void send_fmt(int fd, const char *fmt, ...) {
     char buf[LINE_LEN + 128];
     va_list ap;
@@ -66,6 +67,7 @@ static void send_fmt(int fd, const char *fmt, ...) {
     send_line(fd, buf);
 }
 
+// trims trailing whitespace from a string
 static void rstrip(char *s) {
     size_t n = strlen(s);
     while (n > 0 && (s[n-1] == '\n' || s[n-1] == '\r' || s[n-1] == ' ' || s[n-1] == '\t')) {
@@ -73,6 +75,7 @@ static void rstrip(char *s) {
     }
 }
 
+// checks if a name is valid
 static int valid_name(const char *s) {
     if (!*s) return 0;
     for (; *s; s++) {
@@ -81,6 +84,7 @@ static int valid_name(const char *s) {
     return 1;
 }
 
+// state query functions (caller must hold state_mu)
 static int find_client_slot(int fd) {
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (clients[i].active && clients[i].fd == fd) return i;
@@ -88,6 +92,7 @@ static int find_client_slot(int fd) {
     return -1;
 }
 
+// returns room index or -1 if not found
 static int find_room(const char *name) {
     for (int i = 0; i < nrooms; i++) {
         if (strcmp(rooms[i].name, name) == 0) return i;
@@ -131,6 +136,7 @@ static void ensure_dirs(void) {
     mkdir(MSG_DIR, 0755);
 }
 
+// loads rooms from ROOMS_FILE into memory
 static void load_rooms(void) {
     FILE *f = fopen(ROOMS_FILE, "r");
     if (!f) return;
@@ -147,6 +153,7 @@ static void load_rooms(void) {
     fclose(f);
 }
 
+// appends a new room name to ROOMS_FILE
 static void persist_room(const char *name) {
     pthread_mutex_lock(&io_mu);
     FILE *f = fopen(ROOMS_FILE, "a");
@@ -157,6 +164,7 @@ static void persist_room(const char *name) {
     pthread_mutex_unlock(&io_mu);
 }
 
+// appends a message to the room's log file
 static void persist_message(const char *room, const char *nick, const char *text) {
     char path[256];
     snprintf(path, sizeof(path), "%s/%s.log", MSG_DIR, room);
@@ -169,6 +177,7 @@ static void persist_message(const char *room, const char *nick, const char *text
     pthread_mutex_unlock(&io_mu);
 }
 
+// sends the last HISTORY_TAIL messages from the room's log file to the client
 static void send_history(int fd, const char *room) {
     char path[256];
     snprintf(path, sizeof(path), "%s/%s.log", MSG_DIR, room);
@@ -229,6 +238,7 @@ static void cmd_nick(int ci, char *arg) {
     send_fmt(fd, "OK nick %s", arg);
 }
 
+// lists available rooms to the client
 static void cmd_rooms(int ci) {
     int fd = clients[ci].fd;
     char buf[LINE_LEN];
@@ -242,6 +252,7 @@ static void cmd_rooms(int ci) {
     send_line(fd, buf);
 }
 
+// creates a new room
 static void cmd_create(int ci, char *arg) {
     int fd = clients[ci].fd;
     if (!arg || !*arg) { send_line(fd, "ERR usage: /create <room>"); return; }
@@ -268,6 +279,7 @@ static void cmd_create(int ci, char *arg) {
     send_fmt(fd, "OK created %s", arg);
 }
 
+// joins a room (leaving current room if any)
 static void cmd_join(int ci, char *arg) {
     int fd = clients[ci].fd;
     if (!clients[ci].has_nick) { send_line(fd, "ERR set /nick first"); return; }
@@ -304,7 +316,8 @@ static void cmd_join(int ci, char *arg) {
         room_remove_member_locked(old_idx, fd);
         broadcast_room_locked(old_idx, fd, leave_msg);
     }
-
+    
+    // add to new room
     r->members[r->nmembers++] = fd;
     clients[ci].room_idx = new_idx;
     snprintf(join_msg, sizeof(join_msg), "JOIN %s", clients[ci].nick);
@@ -327,6 +340,7 @@ static void cmd_join(int ci, char *arg) {
     send_line(fd, who);
 }
 
+// lists members of current room
 static void cmd_who(int ci) {
     int fd = clients[ci].fd;
     char who[LINE_LEN];
@@ -350,6 +364,7 @@ static void cmd_who(int ci) {
     send_line(fd, who);
 }
 
+// leaves current room
 static void cmd_leave(int ci) {
     int fd = clients[ci].fd;
     char leave_msg[NICK_LEN + 16];
@@ -368,6 +383,7 @@ static void cmd_leave(int ci) {
     send_line(fd, "OK left");
 }
 
+// handles a message from client not a command
 static void handle_message(int ci, const char *text) {
     int fd = clients[ci].fd;
     if (!clients[ci].has_nick) { send_line(fd, "ERR set /nick first"); return; }
@@ -418,6 +434,7 @@ static void process_line(int ci, char *line) {
     }
 }
 
+// thread function for each client connection
 static void *client_thread(void *arg) {
     int fd = (int)(intptr_t)arg;
 
@@ -493,16 +510,18 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
     unsigned int port = atoi(argv[1]);
-    if (port < 1 || port > 65535) {
+    if (port < 1 || port > 10000) {
         printf("ERROR #1: invalid port specified.\n");
         exit(1);
     }
 
     signal(SIGPIPE, SIG_IGN);
 
+    // initialize state and load rooms
     ensure_dirs();
     load_rooms();
 
+    // create listening socket
     int l_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (l_socket < 0) {
         fprintf(stderr, "ERROR #2: cannot create listening socket.\n");
@@ -511,6 +530,7 @@ int main(int argc, char *argv[]) {
     int yes = 1;
     setsockopt(l_socket, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
 
+    // bind and listen
     struct sockaddr_in servaddr;
     memset(&servaddr, 0, sizeof(servaddr));
     servaddr.sin_family      = AF_INET;
@@ -528,6 +548,7 @@ int main(int argc, char *argv[]) {
 
     printf("Chat server listening on port %u (rooms loaded: %d)\n", port, nrooms);
 
+    // main accept loop
     for (;;) {
         struct sockaddr_in clientaddr;
         socklen_t clen = sizeof(clientaddr);
